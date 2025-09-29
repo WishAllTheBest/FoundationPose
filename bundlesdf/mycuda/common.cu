@@ -209,11 +209,17 @@ __device__ void calculateBarycentricCoordinate2DKernel(const Eigen::Matrix<float
   Eigen::Vector2f AB = triangle.row(1)-triangle.row(0);
   Eigen::Vector2f AP = p-triangle.row(0).transpose();
   Eigen::Matrix2f numerator, denominator;
-  numerator << CA, CP;
+  /*numerator << CA, CP;
   denominator<<AB, AC;
   w(1) = numerator.determinant()/denominator.determinant();
   numerator << AB, AP;
   w(2) = numerator.determinant()/denominator.determinant();
+  */
+  float denominator_det = AB(0) * AC(1) - AB(1) * AC(0);
+  float numerator1_det = CA(0) * CP(1) - CA(1) * CP(0);
+  w(1) = numerator1_det / denominator_det;
+  float numerator2_det = AB(0) * AP(1) - AB(1) * AP(0);
+  w(2) = numerator2_det / denominator_det;
   w(0) = 1-w(1)-w(2);
 }
 
