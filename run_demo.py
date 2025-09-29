@@ -11,7 +11,7 @@ from estimater import *
 from datareader import *
 import argparse
 
-
+# 测试主入口，env:pose
 if __name__=='__main__':
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
