@@ -16,9 +16,10 @@ if __name__=='__main__':
   parser = argparse.ArgumentParser()
   code_dir = os.path.dirname(os.path.realpath(__file__))
   # /demo_data/mustard0/mesh/textured_simple.obj /FoundationPose_manual/mesh/pallet.obj
-  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/demo_data/mustard0/mesh/textured_simple.obj')
+  # /FoundationPose_manual/head/mesh/head.stl.obj
+  parser.add_argument('--mesh_file', type=str, default=f'{code_dir}/FoundationPose_manual/head/mesh/foundationPoseTestData_head.obj')
   # /demo_data/mustard0 /FoundationPose_manual
-  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/demo_data/mustard0')
+  parser.add_argument('--test_scene_dir', type=str, default=f'{code_dir}/FoundationPose_manual/head')
   parser.add_argument('--est_refine_iter', type=int, default=5)
   parser.add_argument('--track_refine_iter', type=int, default=2)
   parser.add_argument('--debug', type=int, default=1)
@@ -29,7 +30,7 @@ if __name__=='__main__':
   set_seed(0)
 
   mesh = trimesh.load(args.mesh_file)
-
+  logging.info("mesh loaded")
   debug = args.debug
   debug_dir = args.debug_dir
   os.system(f'rm -rf {debug_dir}/* && mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam')
@@ -38,8 +39,11 @@ if __name__=='__main__':
   bbox = np.stack([-extents/2, extents/2], axis=0).reshape(2,3)
 
   scorer = ScorePredictor()
+  logging.info("scorer initialization done")
   refiner = PoseRefinePredictor()
+  logging.info("refiner initialization done")
   glctx = dr.RasterizeCudaContext()
+  logging.info("glctx initialization done")
   est = FoundationPose(model_pts=mesh.vertices, model_normals=mesh.vertex_normals, mesh=mesh, scorer=scorer, refiner=refiner, debug_dir=debug_dir, debug=debug, glctx=glctx)
   logging.info("estimator initialization done")
 
