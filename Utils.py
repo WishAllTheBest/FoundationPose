@@ -24,6 +24,7 @@ import pandas as pd
 import open3d as o3d
 from uuid import uuid4
 import cv2
+import OpenEXR,Imath
 from PIL import Image
 import numpy as np
 from collections import defaultdict
@@ -385,6 +386,8 @@ if wp is not None:
 
 
   def erode_depth(depth, radius=2, depth_diff_thres=0.001, ratio_thres=0.8, zfar=100, device='cuda'):
+    if len(depth.shape) == 3:
+        depth = depth[:,:,0]
     depth_wp = wp.from_torch(torch.as_tensor(depth, dtype=torch.float, device=device))
     out_wp = wp.zeros(depth.shape, dtype=float, device=device)
     wp.launch(kernel=erode_depth_kernel, device=device, dim=[depth.shape[0], depth.shape[1]], inputs=[depth_wp, out_wp, radius, depth_diff_thres, ratio_thres, zfar],)

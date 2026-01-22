@@ -60,6 +60,9 @@ class YcbineoatReader:
     self.downscale = downscale
     self.zfar = zfar
     self.color_files = sorted(glob.glob(f"{self.video_dir}/rgb/*.png"))
+    if len(self.color_files) == 0:
+      raise ValueError(f"No RGB images found in {self.video_dir}/rgb/")
+    # self.depth = sorted(glob.glob(f"{self.video_dir}/depth/*.exr"))
     self.K = np.loadtxt(f'{video_dir}/cam_K.txt').reshape(3,3)
     self.id_strs = []
     for color_file in self.color_files:
@@ -121,10 +124,17 @@ class YcbineoatReader:
 
   def get_depth(self,i):
     depth = cv2.imread(self.color_files[i].replace('rgb','depth'),-1)/1e3
+    if len(depth.shape) == 3:  # 如果深度图是3维的
+        depth = depth[..., 0]  # 提取第一个通道
+    # exr_file = OpenEXR.InputFile(self.depth[i])
+    # dw = exr_file.header()['dataWindow']
+    # size = (dw.max.x - dw.min.x + 1, dw.max.y - dw.min.y + 1)
+    # pt = Imath.PixelType(Imath.PixelType.FLOAT)
+    # depth_str = exr_file.channel('R', pt)
+    # depth = np.frombuffer(depth_str, dtype=np.float32).reshape(size[1], size[0])
     depth = cv2.resize(depth, (self.W,self.H), interpolation=cv2.INTER_NEAREST)
     depth[(depth<0.001) | (depth>=self.zfar)] = 0
     return depth
-
 
   def get_xyz_map(self,i):
     depth = self.get_depth(i)
@@ -251,6 +261,8 @@ class BopBaseReader:
     else:
       depth_file = self.color_files[i].replace('rgb','depth').replace('gray','depth')
       depth = cv2.imread(depth_file,-1)*1e-3*self.bop_depth_scale
+    if len(depth.shape) == 3:  # 如果深度图是3维的
+        depth = depth[..., 0]  # 提取第一个通道
     if self.resize!=1:
       depth = cv2.resize(depth, fx=self.resize, fy=self.resize, dsize=None, interpolation=cv2.INTER_NEAREST)
     depth[depth<0.001] = 0
