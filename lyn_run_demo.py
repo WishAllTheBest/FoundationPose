@@ -23,7 +23,7 @@ if __name__=='__main__':
   parser.add_argument('--est_refine_iter', type=int, default=5)
   parser.add_argument('--track_refine_iter', type=int, default=2)
   parser.add_argument('--debug', type=int, default=3)
-  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug')
+  parser.add_argument('--debug_dir', type=str, default=f'{code_dir}/debug_mesh')
   args = parser.parse_args()
 
   set_logging_format()
@@ -77,6 +77,31 @@ if __name__=='__main__':
       center_pose = pose@np.linalg.inv(to_origin)
       vis = draw_posed_3d_box(reader.K, img=color, ob_in_cam=center_pose, bbox=bbox)
       vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=reader.K, thickness=3, transparency=0, is_input_rgb=True)
+      
+      # overlay face mesh edges projected into the image
+      # transform mesh into camera frame using the same pose used for export
+      m_viz = mesh.copy()
+      m_viz.apply_transform(pose)   # now vertices are in camera coordinates
+      verts = m_viz.vertices
+      ones = np.ones((verts.shape[0],1), dtype=verts.dtype)
+      verts_h = np.hstack([verts, ones])            # (N,4) (homogeneous not strictly needed)
+      v_cam = verts                             # (N,3) already in camera frame
+      zs = v_cam[:, 2]
+      proj = (reader.K @ v_cam.T)                # (3,N)
+      proj2 = (proj[:2] / (proj[2:3] + 1e-8)).T # (N,2)
+
+      h, w = color.shape[:2]
+      faces = m_viz.faces
+      for f in faces:
+        if (zs[f] <= 1e-6).any():
+          continue
+        pts = proj2[f].astype(int)
+        if ((pts[:,0] < 0) | (pts[:,0] >= w) | (pts[:,1] < 0) | (pts[:,1] >= h)).all():
+          continue
+        cv2.line(vis, tuple(pts[0]), tuple(pts[1]), (0,255,0), 1, lineType=cv2.LINE_AA)
+        cv2.line(vis, tuple(pts[1]), tuple(pts[2]), (0,255,0), 1, lineType=cv2.LINE_AA)
+        cv2.line(vis, tuple(pts[2]), tuple(pts[0]), (0,255,0), 1, lineType=cv2.LINE_AA)
+      
       cv2.imshow('vis', vis[...,::-1])
       cv2.waitKey(1)
 

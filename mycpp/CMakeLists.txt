@@ -10,7 +10,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -fopenmp -g3 -O3")
 find_package(Boost REQUIRED COMPONENTS system program_options)
 find_package(OpenMP REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(pybind11 REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
 
 include_directories(
   include
