@@ -135,7 +135,7 @@ class RegistrationEvaluator:
         
         return chamfer * 1000  # 转换为毫米
 
-    def depth_fitness_score(self, pose_est, depth_img, mask_img=None, threshold=0.1):
+    def depth_fitness_score(self, pose_est, depth_img, mask_img=None, threshold=0.005):
         """
         [无监督指标] 计算模型与实际深度图的拟合程度。不需要GT。
         Args:
@@ -167,19 +167,23 @@ class RegistrationEvaluator:
         # 变换模型点到估计位姿
         model_transformed = (pose_est[:3, :3] @ self.model_points.T).T + pose_est[:3, 3]
 
-        m_debug = trimesh.Trimesh(vertices=model_transformed, faces=self.mesh.faces)
-        m_debug.export('./tools/debug_eval_model.obj')
-        scene_pcd = trimesh.points.PointCloud(scene_points)
-        scene_pcd.export('./tools/debug_eval_scene.ply')
+        # m_debug = trimesh.Trimesh(vertices=model_transformed, faces=self.mesh.faces)
+        # m_debug.export('./tools/debug_eval_model.obj')
+        # scene_pcd = trimesh.points.PointCloud(scene_points)
+        # scene_pcd.export('./tools/debug_eval_scene.ply')
         # 计算场景点到模型表面的最小距离
         from scipy.spatial import cKDTree
         tree = cKDTree(model_transformed)
         dists, _ = tree.query(scene_points)
         
         # Fitness: 距离小于阈值的点占比
-        fitness = np.mean(dists < threshold)
-        # RMSE: 对应点的均方根误差
-        rmse = np.sqrt(np.mean(dists**2)) * 1000 # 换算成mm
+        inliers = dists < threshold
+        fitness = np.mean(inliers)
+        # RMSE: 仅计算内点 (inliers) 的均方根误差
+        if np.sum(inliers) > 0:
+            rmse = np.sqrt(np.mean(dists[inliers]**2)) * 1000 # 换算成mm
+        else:
+            rmse = 0.0
         
         return fitness, rmse
 
@@ -277,11 +281,11 @@ def evaluate_registration(mesh_file, gt_pose_dir, est_pose_dir, K, rgb_dir=None,
         mask_img = None
         if mask_dir:
             mask_file = os.path.join(mask_dir, filename.replace('.txt', '.png'))
-            if mask_img is None:
-                print(f"Warning: Mask not found for {filename}, calculating full scene distance!")
             if os.path.exists(mask_file):
                 import cv2
                 mask_img = cv2.imread(mask_file, 0)
+                if mask_img is None:
+                    print(f"Warning: Mask not found for {filename}, calculating full scene distance!")
         
         # 评估
         try:
@@ -342,7 +346,7 @@ if __name__ == "__main__":
     parser.add_argument("--K_file", type=str, default=f'{code_dir}/../FoundationPose_manual/kinectCapturedHead/cam_K.txt', help="相机内参文件")
     parser.add_argument("--rgb_dir", type=str, default=f'{code_dir}/../FoundationPose_manual/kinectCapturedHead/rgb', help="RGB图像目录（可选）")
     parser.add_argument("--depth_dir", type=str, default=f'{code_dir}/../FoundationPose_manual/kinectCapturedHead/depth', help="深度图目录（可选，用于无监督评估）")
-    parser.add_argument("--mask_dir", type=str, default=f'{code_dir}/../FoundationPose_manual/kinectCapturedHead/masks', help="掩码目录（可选）")
+    parser.add_argument("--mask_dir", type=str, default=f'{code_dir}/../masks_generated', help="掩码目录（可选）")
     
     args = parser.parse_args()
     

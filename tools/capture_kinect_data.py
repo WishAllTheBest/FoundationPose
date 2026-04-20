@@ -2,122 +2,129 @@ import cv2
 import numpy as np
 import os
 import sys
+import time
 
-# 尝试导入 pyk4a，如果没有安装给出提示
+# 尝试导入 pyk4a
 try:
     import pyk4a
     from pyk4a import Config, PyK4A
 except ImportError:
-    print("错误: 未找到 'pyk4a' 库。")
-    print("请先安装 Azure Kinect SDK 和 pyk4a 库。")
-    print("例如: pip install pyk4a")
-    print("注意: 在 Linux 上你需要先安装 Azure Kinect Sensor SDK (libk4a)。")
+    print("错误: 未找到 'pyk4a' 库。请运行: pip install pyk4a")
     sys.exit(1)
+
+def preprocess_depth(depth_frames, use_bilateral=True):
+    """
+    深度图预处理优化方案：
+    1. 时间维度：多帧中值滤波 (Temporal Median Filter)，消除 iToF 随机跳变噪声。
+    2. 空间维度：双边滤波 (Bilateral Filter)，在保持边缘锐度的同时，平滑平面噪点。
+    """
+    # --- 1. 时间中值滤波 ---
+    # 相比于平均值，中值滤波能完美剔除“飞点”和这种极端的离群噪点
+    depth_stack = np.stack(depth_frames, axis=0)
+    depth_median = np.median(depth_stack, axis=0).astype(np.uint16)
+
+    # --- 2. 空间双边滤波 ---
+    if use_bilateral:
+        # 双边滤波要求输入为 float32
+        depth_float = depth_median.astype(np.float32)
+        # 参数调整建议：
+        # d=5: 邻域直径
+        # sigmaColor=20: 颜色空间标准差。对于单位为mm的深度图，20代表平滑20mm以内的起伏
+        # sigmaSpace=5: 坐标空间标准差
+        filtered_depth = cv2.bilateralFilter(depth_float, 5, 20, 5)
+        depth_final = filtered_depth.astype(np.uint16)
+    else:
+        depth_final = depth_median
+
+    return depth_final
 
 def main():
     # ---------------------------------------------------------
-    # 配置部分
+    # 配置
     # ---------------------------------------------------------
-    output_base_dir = "kinect_data_captured" # 数据保存根目录
+    output_base_dir = "kinect_data_captured_v3"
+    BURST_SIZE = 5  # 关键改进：按下s键时连拍5帧进行时间维度的融合
     
-    # 按照 FoundationPose 的 datareader 要求建立目录结构
-    # rgb/ 和 depth/ 文件夹
     rgb_dir = os.path.join(output_base_dir, "rgb")
     depth_dir = os.path.join(output_base_dir, "depth")
-    
     os.makedirs(rgb_dir, exist_ok=True)
     os.makedirs(depth_dir, exist_ok=True)
     
-    print(f"数据将保存到: {output_base_dir}")
-
-    # ---------------------------------------------------------
-    # Kinect 配置
-    # ---------------------------------------------------------
-    # Resolution: RES_720P (1280x720) 符合你想要的常用分辨率
-    # Depth Mode: NFOV_UNBINNED (高精度模式)
     config = Config(
         color_resolution=pyk4a.ColorResolution.RES_720P,
-        depth_mode=pyk4a.DepthMode.NFOV_UNBINNED,
+        depth_mode=pyk4a.DepthMode.NFOV_UNBINNED, # 确保使用最精准的窄视场模式
         camera_fps=pyk4a.FPS.FPS_30,
         synchronized_images_only=True,
     )
     
     k4a = PyK4A(config)
     k4a.start()
+    
+    # 自动保存匹配 720P RGB 空间的内参 (FoundationPose 必需)
+    K = k4a.calibration.get_camera_matrix(pyk4a.calibration.CalibrationType.COLOR)
+    np.savetxt(os.path.join(output_base_dir, "cam_K.txt"), K)
+    
+    print(f"数据保存路径: {output_base_dir}")
+    print(f"模式: NFOV_UNBINNED, 连拍融合数: {BURST_SIZE} (Burst Mode)")
 
-    # ---------------------------------------------------------
-    # 保存相机内参 (FoundationPose 需要 cam_K.txt)
-    # ---------------------------------------------------------
-    # 获取 Color 相机的内参 (因为我们将要把 Depth 对齐到 Color)
-    # 这里的 intrinsics 格式通常是 [fx, 0, cx, 0, fy, cy, 0, 0, 1] 或者是 3x3 矩阵
-    # pyk4a 的 calibration.get_camera_matrix 返回 3x3 numpy array
-    intrinsic_matrix = k4a.calibration.get_camera_matrix(pyk4a.calibration.CalibrationType.COLOR)
-    
-    print("Color Camera Intrinsic Matrix:")
-    print(intrinsic_matrix)
-    
-    np.savetxt(os.path.join(output_base_dir, "cam_K.txt"), intrinsic_matrix)
-    print(f"内参已保存至: {os.path.join(output_base_dir, 'cam_K.txt')}")
-
-    # ---------------------------------------------------------
-    # 采集循环
-    # ---------------------------------------------------------
-    print("\n开始采集...")
-    print("按 's' 保存当前帧")
-    print("按 'q' 退出")
-    
     idx = 0
-    # 检查当前目录下是否已有文件，避免覆盖
-    while os.path.exists(os.path.join(rgb_dir, f"{idx:06d}.png")):
-        idx += 1
+    print("\n[操作提示]")
+    print("按 's' 连拍融合并保存 (自动双边滤波 + 时间中值)")
+    print("按 'q' 退出")
     
     try:
         while True:
             capture = k4a.get_capture()
-            if capture.color is not None and capture.depth is not None:
-                # 获取 RGB 图像
-                # 注意: capture.color 通常是 BGRA 格式
-                color_image = capture.color
-                if color_image.shape[2] == 4:
-                    color_image = color_image[..., :3] # 去除 Alpha 通道，保留 BGR
-                
-                # 获取对齐后的深度图 (Transformed Depth)
-                # 这个属性会自动将 Depth 投影到 Color 相机的视角和分辨率
-                # 结果是 uint16 类型，单位毫米(mm)，与 Color 图像像素一一对应
-                transformed_depth = capture.transformed_depth
-                
-                # 可视化
-                cv2.imshow("RGB", color_image)
-                
-                # 深度图可视化 (仅用于显示)
-                depth_vis = cv2.normalize(transformed_depth, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
-                cv2.imshow("Aligned Depth", depth_vis)
+            if capture.color is not None:
+                # 实时预览
+                color_vis = capture.color[..., :3].copy()
+                cv2.imshow("Kinect Live (RGB)", color_vis)
                 
                 key = cv2.waitKey(1)
-                
-                if key == ord('s'):
-                    # 保存 RGB
-                    rgb_filename = os.path.join(rgb_dir, f"{idx:06d}.png")
-                    cv2.imwrite(rgb_filename, color_image)
-                    
-                    # 保存 Depth
-                    # 直接保存为 16-bit PNG (单位 mm)
-                    depth_filename = os.path.join(depth_dir, f"{idx:06d}.png")
-                    cv2.imwrite(depth_filename, transformed_depth)
-                    
-                    print(f"已保存帧: {idx} -> {rgb_filename}")
-                    idx += 1
-                    
-                elif key == ord('q'):
+                if key == ord('q'):
                     break
+                elif key == ord('s'):
+                    print(f"\n正在采集并融合第 {idx} 帧，请保持相机不动...")
+                    rgb_burst = []
+                    depth_burst = []
                     
-    except KeyboardInterrupt:
-        print("程序中断")
+                    # --- 核心数据预处理逻辑：连拍 ---
+                    for i in range(BURST_SIZE):
+                        cap = k4a.get_capture()
+                        if cap.color is not None and cap.transformed_depth is not None:
+                            rgb_burst.append(cap.color[..., :3].copy())
+                            depth_burst.append(cap.transformed_depth.copy())
+                        time.sleep(0.01) # 短暂延迟，获取不同时刻的噪声分布
+                    
+                    if len(depth_burst) >= 3:
+                        # 1. 深度图预处理 (中值 + 双边)
+                        processed_depth = preprocess_depth(depth_burst)
+                        # 2. RGB 选取中间一帧（减少连拍过程及由于轻微晃动产生的位移）
+                        final_rgb = rgb_burst[len(rgb_burst)//2]
+                        
+                        # 保存文件
+                        rgb_path = os.path.join(rgb_dir, f"{idx:06d}.png")
+                        depth_path = os.path.join(depth_dir, f"{idx:06d}.png")
+                        cv2.imwrite(rgb_path, final_rgb)
+                        cv2.imwrite(depth_path, processed_depth)
+                        
+                        print(f"保存完成: {idx:06d} (已应用融合去噪)")
+                        
+                        # 可视化反馈
+                        depth_vis = cv2.normalize(processed_depth, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                        depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+                        cv2.imshow("Processed Depth Feedback", depth_vis)
+                        cv2.waitKey(300) 
+                        
+                        idx += 1
+                    else:
+                        print("错误：连拍帧数不足，保存失败。")
+
     finally:
         k4a.stop()
         cv2.destroyAllWindows()
-        print("采集结束")
+        print("采集任务已关闭。")
 
 if __name__ == "__main__":
     main()
+
