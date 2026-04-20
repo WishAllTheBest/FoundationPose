@@ -692,7 +692,7 @@ def draw_xyz_axis(color, ob_in_cam, scale=0.1, K=np.eye(3), thickness=3, transpa
   yy = tuple(project_3d_to_2d(yy, K, ob_in_cam))
   zz = tuple(project_3d_to_2d(zz, K, ob_in_cam))
   line_type = cv2.LINE_AA
-  arrow_len = 0
+  arrow_len = 0.1
   tmp = color.copy()
   tmp1 = tmp.copy()
   tmp1 = cv2.arrowedLine(tmp1, origin, xx, color=(0,0,255), thickness=thickness,line_type=line_type, tipLength=arrow_len)

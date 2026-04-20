@@ -8,8 +8,6 @@ liu yaning
 from estimater import *
 from datareader import *
 import argparse
-from pose_filter import SE3KalmanFilter
-from icp_refiner import FacialICPRefiner
 
 # 测试主入口，env:pose
 if __name__=='__main__':
@@ -33,7 +31,7 @@ if __name__=='__main__':
   logging.info("mesh loaded")
   debug = args.debug
   debug_dir = args.debug_dir
-  os.system(f'rm -rf {debug_dir}/* && mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam {debug_dir}/axis_vis')
+  os.system(f'rm -rf {debug_dir}/* && mkdir -p {debug_dir}/track_vis {debug_dir}/ob_in_cam')
 
   to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
   print("to_origin:", to_origin)
@@ -50,11 +48,6 @@ if __name__=='__main__':
   logging.info("estimator initialization done")
 
   reader = YcbineoatReader(video_dir=args.test_scene_dir, shorter_side=None, zfar=np.inf)
-
-  # 基于 4.5 结果优化方案，初始化流形 SE(3) EKF 滤波器
-  pose_filter = SE3KalmanFilter(process_noise=1e-4, measurement_noise=1e-2, rot_alpha=0.7)
-  # 基于 4.5(1) 骨性特征加权局部修正，初始化带 Huber 鲁棒核的 ICP 精炼器
-  icp_refiner = FacialICPRefiner(mesh=mesh, distance_threshold=0.02)
 
   for i in range(len(reader.color_files)):
     logging.info(f'i:{i}')
@@ -75,12 +68,6 @@ if __name__=='__main__':
     else:
       pose = est.track_one(rgb=color, depth=depth, K=reader.K, iteration=args.track_refine_iter)
 
-    # 4.5.1 骨性特征加权局部修正 (利用含Huber核的点面ICP，强匹配骨性部位，抑制软组织形变深度误差)
-    # pose = icp_refiner.refine(pose, depth, reader.K)
-
-    # 4.5.2 多流形 EKF 姿态抗噪跟踪，防止渲染刺散刺闪
-    # pose = pose_filter.update(pose, dt=1.0)
-
     os.makedirs(f'{debug_dir}/ob_in_cam', exist_ok=True)
     np.savetxt(f'{debug_dir}/ob_in_cam/{reader.id_strs[i]}.txt', pose.reshape(4,4))
 
@@ -88,12 +75,6 @@ if __name__=='__main__':
       center_pose = pose@np.linalg.inv(to_origin)
       vis = draw_posed_3d_box(reader.K, img=color, ob_in_cam=center_pose, bbox=bbox)
       
-      # 保存仅包含坐标轴的可视化结果
-      vis_axis_only = color.copy()
-      vis_axis_only = draw_xyz_axis(vis_axis_only, ob_in_cam=center_pose, scale=0.1, K=reader.K, thickness=4, transparency=0, is_input_rgb=True)
-      os.makedirs(f'{debug_dir}/axis_vis', exist_ok=True)
-      imageio.imwrite(f'{debug_dir}/axis_vis/{reader.id_strs[i]}.png', vis_axis_only)
-
       # overlay face mesh edges projected into the image
       # transform mesh into camera frame using the same pose used for export
       m_viz = mesh.copy()
